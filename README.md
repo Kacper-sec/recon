@@ -1,6 +1,8 @@
 # Recon
 
-A Python script that runs subdomain discovery, DNS bruteforce, DNS validation, HTTP probing and web crawling in sequence. Results are saved in one directory, with crawled URLs split into JavaScript files, pages and other resources.
+I built this to automate the recon steps I kept repeating manually on every bug bounty target: collecting subdomains, validating them, probing for live services and crawling for URLs. It chains existing tools into one pipeline with scope filtering and rate limits, so a full run takes me about 26 minutes instead of more than an hour of manual work. The goal is to spend less time on enumeration and more on actual testing.
+
+The script runs subdomain discovery, DNS bruteforce, DNS validation, HTTP probing and web crawling in sequence. Results are saved in one directory, with crawled URLs split into JavaScript files, pages and other resources.
 
 ## Requirements
 
@@ -26,7 +28,7 @@ python3 recon.py -d example.com \
   -r 20
 ```
 
-Replace the domain and file paths with your own. Use a new output directory for a new scan, or omit `-o` to create a directory automatically. Only scan targets you are authorized to test.
+Replace the domain and file paths with your own. Use a new output directory for a new scan, or omit `-o` to create a directory automatically.
 
 For all available options:
 
@@ -36,14 +38,16 @@ python3 recon.py --help
 
 ## Pipeline
 
-| Stage | Action | Skip flag |
-| --- | --- | --- |
-| 1 | Discover subdomains with SubDomz; its built-in puredns step is disabled | `--skip-1` |
-| 2 | Run DNS bruteforce with puredns and the supplied wordlist | `--skip-2` |
-| 3 | Merge and deduplicate candidates, filter scope and validate DNS | `--skip-3` |
-| 4 | Probe HTTP services with httpx and save detailed results | `--skip-4` |
-| 5 | Crawl the live URL list with one Katana process | `--skip-5` |
-| 6 | Split crawled URLs into JavaScript, pages and other resources | `--skip-6` |
+| Stage | Action                                                                  | Skip flag  |
+|-------|-------------------------------------------------------------------------|------------|
+| 1     | Discover subdomains with SubDomz; its built-in puredns step is disabled | `--skip-1` |
+| 2     | Run DNS bruteforce with puredns and the supplied wordlist               | `--skip-2` |
+| 3     | Merge and deduplicate candidates, filter scope and validate DNS         | `--skip-3` |
+| 4     | Probe HTTP services with httpx and save detailed results                | `--skip-4` |
+| 5     | Crawl the live URL list with one Katana process                         | `--skip-5` |
+| 6     | Split crawled URLs into JavaScript, pages and other resources           | `--skip-6` |
+
+DNS bruteforce runs as a separate stage with its own rate limit instead of inside SubDomz, so all active DNS traffic is controlled from one place.
 
 ### Reuse saved results
 
@@ -60,42 +64,52 @@ Skipped stages keep their existing files. Missing discovery files contribute no 
 
 ## Options
 
-| Option | Purpose |
-| --- | --- |
-| `-d DOMAIN` | Target domain; required |
-| `-o DIRECTORY` | Results directory; required when using skip flags |
-| `-s DIRECTORY_OR_SCRIPT` | SubDomz location; default: `~/SubDomz` |
-| `--wordlist FILE` | Wordlist; required when DNS bruteforce is enabled |
-| `--resolvers FILE` | Public DNS resolvers; default: `~/.config/puredns/resolvers.txt` |
-| `--resolvers-trusted FILE` | Optional trusted DNS resolvers |
-| `--dns-rate NUMBER` | Public resolver query limit per second; default: `100` |
-| `--dns-rate-trusted NUMBER` | Trusted resolver query limit per second; default: `50` |
-| `-r NUMBER` | HTTP requests per second for each of httpx and Katana |
-| `-P` / `--skip-puredns` | Skip DNS bruteforce and DNS validation |
-| `--exclude-host HOST` | Exclude a hostname and its descendants from HTTP stages; repeatable |
-| `--exclude-file FILE` | Load excluded hostnames from a file, one per line |
-| `--subdomains-only` | Exclude the root domain from HTTP stages |
+| Option                      | Purpose                                                             |
+|-----------------------------|---------------------------------------------------------------------|
+| `-d DOMAIN`                 | Target domain; required                                             |
+| `-o DIRECTORY`              | Results directory; required when using skip flags                   |
+| `-s DIRECTORY_OR_SCRIPT`    | SubDomz location; default: `~/SubDomz`                              |
+| `--wordlist FILE`           | Wordlist; required when DNS bruteforce is enabled                   |
+| `--resolvers FILE`          | Public DNS resolvers; default: `~/.config/puredns/resolvers.txt`    |
+| `--resolvers-trusted FILE`  | Optional trusted DNS resolvers                                      |
+| `--dns-rate NUMBER`         | Public resolver query limit per second; default: `100`              |
+| `--dns-rate-trusted NUMBER` | Trusted resolver query limit per second; default: `50`              |
+| `-r NUMBER`                 | HTTP requests per second for each of httpx and Katana               |
+| `-P` / `--skip-puredns`     | Skip DNS bruteforce and DNS validation                              |
+| `--exclude-host HOST`       | Exclude a hostname and its descendants from HTTP stages; repeatable |
+| `--exclude-file FILE`       | Load excluded hostnames from a file, one per line                   |
+| `--subdomains-only`         | Exclude the root domain from HTTP stages                            |
 
 The default HTTP scope includes the root domain and its subdomains. Redirects are disabled in httpx and Katana. Saved exclusions remain in effect when reusing a results directory.
 
-HTTP scope rules and `-r` do not control tools launched inside SubDomz. HTTP scope rules do not control DNS queries. There is no overall scan or stage time limit; external tools retain their own request timeouts.
+## Traffic and rate limits
+
+| Stage | Traffic                                          | Controlled by                       |
+|-------|--------------------------------------------------|-------------------------------------|
+| 1     | Passive: queries third-party sources             | No limit needed                     |
+| 2–3   | DNS queries through the configured resolvers     | `--dns-rate`, `--dns-rate-trusted`  |
+| 4     | HTTP requests to the target (httpx)              | `-r`                                |
+| 5     | HTTP requests to the target (Katana)             | `-r`                                |
+| 6     | Local file processing                            | n/a                                 |
+
+HTTP scope rules do not control DNS queries. There is no overall scan or stage time limit; external tools retain their own request timeouts. Check the rules of the program you are testing (allowed request rates, automated scanning, excluded hosts) before you run the script, and set `-r` and the DNS rates accordingly.
 
 ## Results
 
-| File | Contents |
-| --- | --- |
-| `01_subdomz_raw.txt` | Collected SubDomz results |
-| `01_puredns.txt` | DNS bruteforce results |
-| `02_subdomains_deduped.txt` | Merged, deduplicated candidates within scope |
-| `02_dns_resolved.txt` | DNS-validated candidates |
-| `03_httpx_results.jsonl` | Raw structured HTTP results |
-| `03_httpx_details.csv` | HTTP status, title, content type, redirect location, IP, technologies and response time |
-| `03_httpx_live.txt` | Live URLs selected for crawling |
-| `04_katana_urls.txt` | Deduplicated crawl URLs within scope |
-| `05_split_js.txt` | JavaScript URLs |
-| `05_split_pages.txt` | Page URLs |
-| `05_split_other.txt` | Other resource URLs |
-| `run.log` / `warnings.txt` | Pipeline log and detected issues |
+| File                        | Contents                                                                                |
+|-----------------------------|-----------------------------------------------------------------------------------------|
+| `01_subdomz_raw.txt`        | Collected SubDomz results                                                               |
+| `01_puredns.txt`            | DNS bruteforce results                                                                  |
+| `02_subdomains_deduped.txt` | Merged, deduplicated candidates within scope                                            |
+| `02_dns_resolved.txt`       | DNS-validated candidates                                                                |
+| `03_httpx_results.jsonl`    | Raw structured HTTP results                                                             |
+| `03_httpx_details.csv`      | HTTP status, title, content type, redirect location, IP, technologies and response time |
+| `03_httpx_live.txt`         | Live URLs selected for crawling                                                         |
+| `04_katana_urls.txt`        | Deduplicated crawl URLs within scope                                                    |
+| `05_split_js.txt`           | JavaScript URLs                                                                         |
+| `05_split_pages.txt`        | Page URLs                                                                               |
+| `05_split_other.txt`        | Other resource URLs                                                                     |
+| `run.log` / `warnings.txt`  | Pipeline log and detected issues                                                        |
 
 HTTP details are always collected. Additional diagnostic files include `04_katana_process.log`, `04_katana_errors.log` and rejected scope entries. Keep `scan_config.json` with the results when reusing a directory.
 
@@ -103,4 +117,10 @@ Press **Ctrl+C twice within three seconds** to stop. Available partial results a
 
 Exit codes: `0` completed without detected issues; `1` fatal error; `2` partial or suspect results, or invalid arguments; `130` interrupted. Check the logs when output is empty or incomplete.
 
+## Tested on
 
+Kali Linux, with all external tools installed. Run repeatedly against real bug bounty targets after each change to the script.
+
+## Responsible use
+
+Only scan targets you are authorized to test, and follow the rules of the program you are working on.
