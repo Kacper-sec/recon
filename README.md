@@ -103,6 +103,4 @@ Press **Ctrl+C twice within three seconds** to stop. Available partial results a
 
 Exit codes: `0` completed without detected issues; `1` fatal error; `2` partial or suspect results, or invalid arguments; `130` interrupted. Check the logs when output is empty or incomplete.
 
-## Status
 
-Development release. Local checks pass; a complete scan with all external tools on Kali has not yet been verified.
